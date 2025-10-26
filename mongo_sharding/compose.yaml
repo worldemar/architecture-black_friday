@@ -1,0 +1,170 @@
+name: architecture-black_friday-mongo-sharding
+
+services:
+  # Config Server для хранения метаданных о шардах
+  configSrv:
+    image: dh-mirror.gitverse.ru/mongo:latest
+    container_name: sharding_configSrv
+    restart: always
+    ports:
+      - "27017:27017"
+    networks:
+      app-network:
+        ipv4_address: 173.17.0.10
+    volumes:
+      - config-data:/data/db
+    command:
+      [
+        "--configsvr",
+        "--replSet",
+        "config_server",
+        "--bind_ip_all",
+        "--port",
+        "27017"
+      ]
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      start_period: 10s
+
+  # Первый шард
+  shard1:
+    image: dh-mirror.gitverse.ru/mongo:latest
+    container_name: sharding_shard1
+    restart: always
+    ports:
+      - "27018:27018"
+    networks:
+      app-network:
+        ipv4_address: 173.17.0.9
+    volumes:
+      - shard1-data:/data/db
+    command:
+      [
+        "--shardsvr",
+        "--replSet",
+        "shard1",
+        "--bind_ip_all",
+        "--port",
+        "27018"
+      ]
+    healthcheck:
+      test: ["CMD", "mongosh", "--port", "27018", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      start_period: 10s
+
+  # Второй шард
+  shard2:
+    image: dh-mirror.gitverse.ru/mongo:latest
+    container_name: sharding_shard2
+    restart: always
+    ports:
+      - "27019:27019"
+    networks:
+      app-network:
+        ipv4_address: 173.17.0.8
+    volumes:
+      - shard2-data:/data/db
+    command:
+      [
+        "--shardsvr",
+        "--replSet",
+        "shard2",
+        "--bind_ip_all",
+        "--port",
+        "27019"
+      ]
+    healthcheck:
+      test: ["CMD", "mongosh", "--port", "27019", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      start_period: 10s
+
+  # Роутер mongos
+  mongos_router:
+    image: dh-mirror.gitverse.ru/mongo:latest
+    container_name: sharding_mongos_router
+    restart: always
+    ports:
+      - "27020:27020"
+    networks:
+      app-network:
+        ipv4_address: 173.17.0.7
+    command:
+      [
+        "mongos",
+        "--configdb",
+        "config_server/configSrv:27017",
+        "--bind_ip_all",
+        "--port",
+        "27020"
+      ]
+    depends_on:
+      - configSrv
+      - shard1
+      - shard2
+    healthcheck:
+      test: ["CMD", "mongosh", "--port", "27020", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      start_period: 10s
+
+  # Приложение pymongo_api
+  pymongo_api:
+    container_name: sharding_pymongo_api
+    image: kazhem/pymongo_api:1.0.0
+    depends_on:
+      - mongos_router
+    ports:
+      - "8080:8080"
+    networks:
+      app-network:
+        ipv4_address: 173.17.0.6
+    environment:
+      MONGODB_URL: "mongodb://mongos_router:27020"
+      MONGODB_DATABASE_NAME: "somedb"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >
+          python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/')"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Тесты приложения
+  pymongo_api_test:
+    container_name: mongo-sharding_api_test
+    build:
+      context: api_app_test
+      dockerfile: Dockerfile
+    depends_on:
+      configSrv:
+        condition: service_healthy
+      shard1:
+        condition: service_healthy
+      shard2:
+        condition: service_healthy
+      mongos_router:
+        condition: service_healthy
+      pymongo_api:
+        condition: service_healthy
+    networks:
+      app-network:
+        ipv4_address: 173.17.0.5
+    environment:
+      - PYTHONUNBUFFERED=1
+    profiles:
+      - test
+
+networks:
+  app-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 173.17.0.0/16
+
+volumes:
+  config-data:
+  shard1-data:
+  shard2-data:

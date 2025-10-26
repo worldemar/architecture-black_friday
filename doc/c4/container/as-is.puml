@@ -1,0 +1,15 @@
+@startuml
+
+!theme carbon-gray
+!include <C4/C4_Container>
+!include common/theme.iuml
+
+title Исходная схема
+header «Мобильный мир»
+
+Container(pymongo_api, "pymongo_api", "")
+ContainerDb(mongodb, "mongodb", "")
+
+Rel_R(pymongo_api, mongodb, "")
+
+@enduml

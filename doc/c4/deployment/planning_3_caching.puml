@@ -1,0 +1,97 @@
+@startuml
+
+!theme carbon-gray
+!include <C4/C4_Component>
+!include common/c4-custom-rel.iuml
+!include common/theme.iuml
+
+title Схема с шардированием, репликацией MongoDB и кешированием Redis
+header «Мобильный мир»
+
+Person(user, "Пользователь", "")
+
+Boundary(app, "Приложение", "pymongo_api") {
+    Component(pymongo_api, "API приложения", "FastAPI")
+    Component(driver, "Драйвер БД", "pymongo", "Балансирует нагрузку с помощью connection string с перечислением")
+}
+
+Boundary(cache, "Redis Master-Replica") {
+    ContainerDb(redis.master, "Redis Master", "redis", "PRIMARY")
+    ContainerDb(redis.1, "Redis Replica 1", "redis", "SECONDARY")
+    ContainerDb(redis.n, "Redis Replica N", "redis", "SECONDARY")
+    redis.1 <.l.> redis.n : масштабирование
+
+  note as sentinel_note
+    Узлы можно сопроводить
+    Redis Sentinel, это даст:
+    * Мониторинг здоровья Redis
+    * Автоматический failover
+    * Кворум для принятия решений
+  end note
+  sentinel_note .r. redis.master
+  sentinel_note .d. redis.n
+}
+
+Boundary(router, "MongoDB Query Routers") {
+    Container(router.1, "mongos-1", "MongoDB Router")
+    Container(router.n, "mongos-N", "MongoDB Router")
+    router.1 <.r.> router.n : масштабирование
+}
+
+Boundary(config, "Config Server Replica Set") {
+    ContainerDb(config.master, "Config Server", "mongod", "PRIMARY")
+    ContainerDb(config.1, "Config Server 1", "mongod", "SECONDARY")
+    ContainerDb(config.N, "Config Server N", "mongod", "SECONDARY")
+    config.1 <.r.> config.N : масштабирование
+}
+
+Boundary(shard1, "Shard 1 Replica Set") {
+    ContainerDb(shard1.r1, "Shard 1-R-1", "mongod", "PRIMARY")
+    ContainerDb(shard1.r2, "Shard 1-R-2", "mongod", "SECONDARY")
+    ContainerDb(shard1.r3, "Shard 1-R-N", "mongod", "SECONDARY")
+    shard1.r2 <.r.> shard1.r3 : масштабирование
+}
+
+Boundary(shard2, "Shard 2 Replica Set") {
+    ContainerDb(shard2.r1, "Shard 2-R-1", "mongod", "PRIMARY")
+    ContainerDb(shard2.r2, "Shard 2-R-2", "mongod", "SECONDARY")
+    ContainerDb(shard2.r3, "Shard 2-R-N", "mongod", "SECONDARY")
+    shard2.r2 <.r.> shard2.r3 : масштабирование
+}
+
+Rel(user, pymongo_api, "Запросы API", "HTTPS")
+
+Rel(pymongo_api, driver, "Операции с БД", "Python Module")
+Rel_L(pymongo_api, redis.master, "Запись в кеш", "Redis Protocol")
+Rel_D(pymongo_api, redis.1, "Чтение из кеша", "Redis Protocol")
+
+Rel(driver, router.1, "Запросы", "MongoDB")
+Rel(driver, router.n, "Запросы", "MongoDB")
+
+ARel(router.1, config.master, "Получение\nметаданных", "MongoDB", $arrow="--d->>")
+ARel(router.n, config.master, "Получение\nметаданных", "MongoDB", $arrow="--d->>")
+
+
+ARel(router.1, shard1.r1, "Чтение\nЗапись", "MongoDB", $arrow="---d->>")
+ARel(router.n, shard1.r1, "Чтение\nЗапись", "MongoDB", $arrow="---d->>")
+ARel(router.1, shard2.r1, "Чтение\nЗапись", "MongoDB", $arrow="---d->>")
+ARel(router.n, shard2.r1, "Чтение\nЗапись", "MongoDB", $arrow="---d->>")
+
+Rel_D(config.master, config.1, "Репликация", "MongoDB")
+Rel_D(config.master, config.N, "Репликация", "MongoDB")
+
+Rel_D(shard1.r1, shard1.r2, "Репликация", "MongoDB")
+Rel_D(shard1.r1, shard1.r3, "Репликация", "MongoDB")
+
+Rel_D(shard2.r1, shard2.r2, "Репликация", "MongoDB")
+Rel_D(shard2.r1, shard2.r3, "Репликация", "MongoDB")
+
+Rel_D(redis.master, redis.1, "Репликация", "Redis")
+Rel_D(redis.master, redis.n, "Репликация", "Redis")
+
+' layout trick to space out the arrows
+ARel(shard1.r1, config.master, "", "", $arrow="-[hidden]d->>")
+ARel(shard2.r1, config.master, "", "", $arrow="-[hidden]d->>")
+
+@enduml
+
