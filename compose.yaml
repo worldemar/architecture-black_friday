@@ -4,6 +4,12 @@ services:
     image: dh-mirror.gitverse.ru/mongo:latest
     volumes:
       - mongodb1_data_container:/data/db
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   pymongo_api:
     container_name: pymongo_api
@@ -17,6 +23,40 @@ services:
     environment:
       MONGODB_URL: "mongodb://mongodb1"
       MONGODB_DATABASE_NAME: "somedb"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # test
+  api_test:
+    container_name: api_test
+    build:
+      context: api_app_test
+      dockerfile: Dockerfile
+    depends_on:
+      mongodb1:
+        condition: service_healthy
+      pymongo_api:
+        condition: service_healthy
+    environment:
+      - PYTHONUNBUFFERED=1
+    profiles:
+      - test
+
+  # lint
+  ruff:
+    container_name: ruff_linter
+    build:
+      context: linter
+      dockerfile: Dockerfile
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    profiles:
+      - lint
 
 
 volumes:

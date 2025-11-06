@@ -1,0 +1,75 @@
+@startuml
+
+!theme carbon-gray
+!include <C4/C4_Component>
+!include common/c4-custom-rel.iuml
+!include common/theme.iuml
+
+title Схема с шардированием и репликацией MongoDB
+header «Мобильный мир»
+
+Person(user, "Пользователь", "")
+
+Boundary(app, "Приложение", "pymongo_api") {
+    Component(pymongo_api, "API приложения", "FastAPI")
+    Component(driver, "Драйвер БД", "pymongo", "Балансирует нагрузку с помощью connection string с перечислением")
+}
+
+Boundary(router, "MongoDB Query Routers") {
+    Container(router.1, "mongos-1", "MongoDB Router")
+    Container(router.n, "mongos-N", "MongoDB Router")
+    router.1 <.r.> router.n : масштабирование
+}
+
+Boundary(config, "Config Server Replica Set") {
+    ContainerDb(config.srv1, "Config Server", "mongod", "PRIMARY")
+    ContainerDb(config.srv2, "Config Server 1", "mongod", "SECONDARY")
+    ContainerDb(config.srv3, "Config Server N", "mongod", "SECONDARY")
+    config.srv2 <.r.> config.srv3 : масштабирование
+}
+
+Boundary(shard1, "Shard 1 Replica Set") {
+    ContainerDb(shard1.r1, "Shard 1-R-1", "mongod", "PRIMARY")
+    ContainerDb(shard1.r2, "Shard 1-R-2", "mongod", "SECONDARY")
+    ContainerDb(shard1.r3, "Shard 1-R-N", "mongod", "SECONDARY")
+    shard1.r2 <.r.> shard1.r3 : масштабирование
+}
+
+Boundary(shard2, "Shard 2 Replica Set") {
+    ContainerDb(shard2.r1, "Shard 2-R-1", "mongod", "PRIMARY")
+    ContainerDb(shard2.r2, "Shard 2-R-2", "mongod", "SECONDARY")
+    ContainerDb(shard2.r3, "Shard 2-R-N", "mongod", "SECONDARY")
+    shard2.r2 <.r.> shard2.r3 : масштабирование
+}
+
+Rel(user, pymongo_api, "Запросы API", "HTTPS")
+
+Rel(pymongo_api, driver, "Операции с БД", "Python Module")
+
+Rel(driver, router.1, "Запросы", "MongoDB")
+Rel(driver, router.n, "Запросы", "MongoDB")
+
+ARel(router.1, config.srv1, "Получение\nметаданных", "MongoDB", $arrow="-d->>")
+ARel(router.n, config.srv1, "Получение\nметаданных", "MongoDB", $arrow="-d->>")
+
+
+ARel(router.1, shard1.r1, "Чтение\nЗапись", "MongoDB", $arrow="--d->>")
+ARel(router.n, shard1.r1, "Чтение\nЗапись", "MongoDB", $arrow="--d->>")
+ARel(router.1, shard2.r1, "Чтение\nЗапись", "MongoDB", $arrow="--d->>")
+ARel(router.n, shard2.r1, "Чтение\nЗапись", "MongoDB", $arrow="--d->>")
+
+Rel_D(config.srv1, config.srv2, "Репликация", "MongoDB")
+Rel_D(config.srv1, config.srv3, "Репликация", "MongoDB")
+
+Rel_D(shard1.r1, shard1.r2, "Репликация", "MongoDB")
+Rel_D(shard1.r1, shard1.r3, "Репликация", "MongoDB")
+
+Rel_D(shard2.r1, shard2.r2, "Репликация", "MongoDB")
+Rel_D(shard2.r1, shard2.r3, "Репликация", "MongoDB")
+
+' layout trick to space out the arrows
+ARel(shard1.r1, config.srv1, "", "", $arrow="-[hidden]d->>")
+ARel(shard2.r1, config.srv1, "", "", $arrow="-[hidden]d->>")
+
+@enduml
+
